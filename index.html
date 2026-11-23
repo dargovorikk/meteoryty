@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Meteoryty">
+<meta name="theme-color" content="#0b0a24">
+<title>Deszcz meteorytów</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0b0a24;overflow:hidden;overscroll-behavior:none;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;font-family:Rubik,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff}
+canvas{position:fixed;inset:0;display:block;width:100%;height:100%}
+.screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:16px;padding:max(24px,env(safe-area-inset-top)) 24px max(24px,env(safe-area-inset-bottom));background:radial-gradient(ellipse at 50% 40%,rgba(40,24,90,.55),rgba(11,10,36,.88))}
+.hidden{display:none!important}
+h1{margin:0;font-weight:800;font-size:clamp(36px,10vw,64px);line-height:1.02;letter-spacing:.01em;text-shadow:0 0 24px rgba(255,140,60,.55)}
+h1 span{display:block;color:#ffb347}
+p{margin:0;max-width:380px;line-height:1.45;font-size:16px;color:#d9d4ff}
+.score{font-size:clamp(56px,16vw,96px);font-weight:800;line-height:1;color:#ffd166}
+.best{font-size:16px;color:#b9b2ff}
+button{font:inherit;font-weight:800;font-size:20px;min-height:56px;padding:0 40px;border:0;border-radius:999px;background:linear-gradient(180deg,#ffd166,#ff8c42);color:#2a1238;cursor:pointer;box-shadow:0 6px 0 #b5481a,0 10px 30px rgba(255,140,66,.4)}
+button:active{transform:translateY(4px);box-shadow:0 2px 0 #b5481a}
+button:focus-visible{outline:3px solid #fff;outline-offset:4px}
+.ghost{background:transparent;color:#fff;box-shadow:none;border:2px solid rgba(255,255,255,.35);font-size:16px;min-height:44px;padding:0 22px}
+.ghost:active{transform:none;box-shadow:none}
+.help{font-size:14px;color:#a9a2e8;max-width:340px}
+#hud{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:calc(12px + env(safe-area-inset-top)) 18px 12px;font-weight:800;font-size:20px;pointer-events:none;text-shadow:0 2px 6px #000}
+#lives{color:#ff5d73;letter-spacing:3px}
+#pauseBtn{pointer-events:auto;min-height:40px;padding:0 14px;font-size:16px}
+#toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);font-size:14px;color:#cfc9ff;opacity:.85;pointer-events:none;text-align:center}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="lives"></div>
+  <div id="scoreTxt">0</div>
+  <button id="pauseBtn" class="ghost" aria-label="Pauza">II</button>
+</div>
+<div id="toast"></div>
+
+<div id="startScreen" class="screen">
+  <h1>Deszcz<span>meteorytów</span></h1>
+  <p>Steruj kulką i unikaj meteorytów. Zbieraj gwiazdki, dają dodatkowe punkty.</p>
+  <button id="startBtn">Graj</button>
+  <p class="help">Telefon: przechylaj go. Trzymaj go wygodnie na starcie, a gra zapamięta tę pozycję jako „prosto”.<br>Komputer: strzałki lub WASD albo trzymaj myszkę tam, dokąd chcesz lecieć.</p>
+  <p class="best" id="bestStart"></p>
+</div>
+
+<div id="pauseScreen" class="screen hidden">
+  <h1>Pauza</h1>
+  <button id="resumeBtn">Graj dalej</button>
+  <button id="calibBtn" class="ghost">Wyrównaj przechylenie</button>
+</div>
+
+<div id="overScreen" class="screen hidden">
+  <p>Twój wynik</p>
+  <div class="score" id="finalScore">0</div>
+  <div class="best" id="bestOver"></div>
+  <button id="againBtn">Jeszcze raz</button>
+</div>
+
+<script>
+{
+// ================= USTAWIENIA =================
+// Zmieniaj te liczby i patrz, jak zmienia się gra.
+const CONFIG = {
+  lives: 3,                // ile żyć
+  playerSize: 14,          // rozmiar kulki
+  tiltPower: 0.9,          // czułość przechylenia (więcej = szybsza reakcja)
+  tiltMaxAngle: 25,        // o ile stopni przechylić, żeby lecieć z pełną prędkością
+  keyPower: 0.8,           // prędkość przy sterowaniu klawiaturą
+  friction: 0.9,           // 0.95 = ślizga się jak po lodzie, 0.8 = szybko się zatrzymuje
+  meteorSpeed: 2.4,        // prędkość meteorytów na starcie
+  speedGrowth: 0.05,       // o ile przyspieszają co sekundę
+  spawnStart: 850,         // ms między meteorytami na starcie
+  spawnMin: 230,           // najkrótszy odstęp (maksymalny poziom trudności)
+  starChance: 0.15,        // szansa, że zamiast meteorytu przyleci gwiazdka
+  starPoints: 10,          // ile punktów daje gwiazdka
+  hitPause: 1500,          // ile ms nieśmiertelności po uderzeniu
+};
+// ================================================
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+let W = 0, H = 0, S = 1, DPR = 1;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W * DPR; cv.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  S = Math.max(0.8, Math.min(1.6, Math.min(W, H) / 400));
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- rekord ----------
+function getBest() { try { return +localStorage.getItem('meteorBest') || 0; } catch (e) { return 0; } }
+function setBest(v) { try { localStorage.setItem('meteorBest', v); } catch (e) {} }
+function showBest() {
+  const b = getBest();
+  $('bestStart').textContent = b ? 'Rekord: ' + b : '';
+}
+showBest();
+
+// ---------- sterowanie ----------
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === 'Escape' || e.key === 'p') togglePause();
+});
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+let pointer = null;
+cv.addEventListener('pointerdown', e => { pointer = { x: e.clientX, y: e.clientY }; });
+cv.addEventListener('pointermove', e => { if (pointer || e.pointerType === 'mouse' && e.buttons) pointer = { x: e.clientX, y: e.clientY }; });
+window.addEventListener('pointerup', () => { pointer = null; });
+window.addEventListener('pointercancel', () => { pointer = null; });
+
+let tilt = null;            // aktualne przechylenie {x, y}
+let calib = { x: 0, y: 0 }; // pozycja „prosto”
+let needCalib = true;
+let hasTilt = false;
+
+function onOrient(e) {
+  if (e.gamma === null || e.beta === null) return;
+  hasTilt = true;
+  const a = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+  let x, y;
+  if (a === 90) { x = e.beta; y = -e.gamma; }
+  else if (a === -90 || a === 270) { x = -e.beta; y = e.gamma; }
+  else if (a === 180) { x = -e.gamma; y = -e.beta; }
+  else { x = e.gamma; y = e.beta; }
+  tilt = { x, y };
+  if (needCalib) { calib = { x, y }; needCalib = false; }
+}
+
+async function enableTilt() {
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const r = await DeviceOrientationEvent.requestPermission();
+      if (r !== 'granted') { toast('Brak zgody na czujnik ruchu. Steruj palcem: trzymaj go tam, dokąd chcesz lecieć'); return; }
+    }
+    window.addEventListener('deviceorientation', onOrient);
+  } catch (err) {
+    toast('Przechylanie niedostępne. Steruj palcem lub klawiaturą');
+  }
+}
+
+let toastTimer = 0;
+function toast(t) {
+  $('toast').textContent = t;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $('toast').textContent = ''; }, 4000);
+}
+
+// ---------- gwiaździste niebo ----------
+const bgStars = Array.from({ length: 90 }, () => ({
+  x: Math.random(), y: Math.random(), z: Math.random() * 0.8 + 0.2
+}));
+
+// ---------- stan gry ----------
+let state = 'start';
+let player, rocks, sparks, score, lives, elapsed, spawnTimer, hitTimer, shake, lastT;
+
+function reset() {
+  player = { x: W / 2, y: H * 0.72, vx: 0, vy: 0 };
+  rocks = []; sparks = [];
+  score = 0; lives = CONFIG.lives; elapsed = 0;
+  spawnTimer = 0; hitTimer = 0; shake = 0;
+  needCalib = true;
+  updateHud();
+}
+
+function makeRock() {
+  const isStar = Math.random() < CONFIG.starChance;
+  const r = (isStar ? 13 : 10 + Math.random() * 20) * S;
+  const pts = [];
+  const n = 9;
+  for (let i = 0; i < n; i++) pts.push(0.75 + Math.random() * 0.35);
+  const speed = (CONFIG.meteorSpeed + elapsed * CONFIG.speedGrowth) * (0.8 + Math.random() * 0.5) * S;
+  return {
+    x: r + Math.random() * (W - 2 * r), y: -r * 2, r,
+    vx: (Math.random() - 0.5) * 0.8 * S, vy: speed,
+    rot: Math.random() * 6.28, spin: (Math.random() - 0.5) * 0.06,
+    star: isStar, pts
+  };
+}
+
+function burst(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * 6.28, s = (1 + Math.random() * 4) * S;
+    sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, color });
+  }
+}
+
+function updateHud() {
+  $('scoreTxt').textContent = score;
+  $('lives').textContent = '♥'.repeat(Math.max(0, lives));
+}
+
+// ---------- logika ----------
+function update(dt) {
+  const f = dt / 16.67;
+  elapsed += dt / 1000;
+
+  // sterowanie -> przyspieszenie
+  let ax = 0, ay = 0;
+  if (tilt && hasTilt) {
+    const m = CONFIG.tiltMaxAngle;
+    ax += Math.max(-1, Math.min(1, (tilt.x - calib.x) / m)) * CONFIG.tiltPower;
+    ay += Math.max(-1, Math.min(1, (tilt.y - calib.y) / m)) * CONFIG.tiltPower;
+  }
+  if (keys['arrowleft'] || keys['a']) ax -= CONFIG.keyPower;
+  if (keys['arrowright'] || keys['d']) ax += CONFIG.keyPower;
+  if (keys['arrowup'] || keys['w']) ay -= CONFIG.keyPower;
+  if (keys['arrowdown'] || keys['s']) ay += CONFIG.keyPower;
+  if (pointer) {
+    ax += Math.max(-1, Math.min(1, (pointer.x - player.x) / (60 * S))) * CONFIG.keyPower;
+    ay += Math.max(-1, Math.min(1, (pointer.y - player.y) / (60 * S))) * CONFIG.keyPower;
+  }
+
+  const fr = Math.pow(CONFIG.friction, f);
+  player.vx = (player.vx + ax * S * f) * fr;
+  player.vy = (player.vy + ay * S * f) * fr;
+  player.x += player.vx * f;
+  player.y += player.vy * f;
+
+  const pr = CONFIG.playerSize * S;
+  const top = 70; // pod górnym paskiem z punktami
+  if (player.x < pr) { player.x = pr; player.vx *= -0.4; }
+  if (player.x > W - pr) { player.x = W - pr; player.vx *= -0.4; }
+  if (player.y < top) { player.y = top; player.vy *= -0.4; }
+  if (player.y > H - pr) { player.y = H - pr; player.vy *= -0.4; }
+
+  // nowe meteoryty
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    rocks.push(makeRock());
+    const every = Math.max(CONFIG.spawnMin, CONFIG.spawnStart - elapsed * 12);
+    spawnTimer = every * (0.6 + Math.random() * 0.8) / Math.min(1.5, S);
+  }
+
+  // ruch i zderzenia
+  hitTimer = Math.max(0, hitTimer - dt);
+  for (let i = rocks.length - 1; i >= 0; i--) {
+    const r = rocks[i];
+    r.x += r.vx * f; r.y += r.vy * f; r.rot += r.spin * f;
+    if (r.y - r.r > H) { rocks.splice(i, 1); continue; }
+    const d = Math.hypot(r.x - player.x, r.y - player.y);
+    if (d < r.r * 0.85 + pr * 0.85) {
+      if (r.star) {
+        score += CONFIG.starPoints;
+        burst(r.x, r.y, '#ffd166', 18);
+        rocks.splice(i, 1);
+      } else if (hitTimer === 0) {
+        lives--;
+        hitTimer = CONFIG.hitPause;
+        shake = 14;
+        burst(player.x, player.y, '#ff6b4a', 30);
+        if (navigator.vibrate) { try { navigator.vibrate(150); } catch (e) {} }
+        rocks.splice(i, 1);
+        if (lives <= 0) { gameOver(); return; }
+      }
+    }
+  }
+
+  // punkty za czas
+  const sec = Math.floor(elapsed);
+  if (sec !== update.lastSec) { if (sec > 0) score++; update.lastSec = sec; }
+
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const p = sparks[i];
+    p.x += p.vx * f; p.y += p.vy * f; p.vx *= 0.96; p.vy *= 0.96;
+    p.life -= 0.025 * f;
+    if (p.life <= 0) sparks.splice(i, 1);
+  }
+  shake = Math.max(0, shake - 0.8 * f);
+  updateHud();
+}
+update.lastSec = 0;
+
+// ---------- rysowanie ----------
+function drawBg(dt) {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#0b0a24'); g.addColorStop(0.6, '#1c1347'); g.addColorStop(1, '#3a1d4f');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const move = state === 'play' ? dt / 16.67 : 0.3;
+  for (const s of bgStars) {
+    s.y += 0.0008 * s.z * move;
+    if (s.y > 1) { s.y = 0; s.x = Math.random(); }
+    ctx.globalAlpha = 0.35 + s.z * 0.6;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(s.x * W, s.y * H, s.z * 2, s.z * 2);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawRock(r) {
+  ctx.save();
+  ctx.translate(r.x, r.y);
+  if (r.star) {
+    const pulse = 1 + Math.sin(performance.now() / 150) * 0.12;
+    ctx.rotate(r.rot);
+    ctx.shadowColor = '#ffd166'; ctx.shadowBlur = 20;
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const rad = (i % 2 ? r.r * 0.45 : r.r) * pulse;
+      const a = i * Math.PI / 5 - Math.PI / 2;
+      ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+    return;
+  }
+  // ognisty ogon
+  const tail = ctx.createLinearGradient(0, -r.r * 4, 0, 0);
+  tail.addColorStop(0, 'rgba(255,90,40,0)');
+  tail.addColorStop(1, 'rgba(255,150,60,.55)');
+  ctx.fillStyle = tail;
+  ctx.beginPath();
+  ctx.moveTo(-r.r * 0.8, 0); ctx.lineTo(0, -r.r * 4); ctx.lineTo(r.r * 0.8, 0);
+  ctx.closePath(); ctx.fill();
+  // kamień
+  ctx.rotate(r.rot);
+  const g = ctx.createRadialGradient(-r.r * 0.3, -r.r * 0.3, r.r * 0.1, 0, 0, r.r);
+  g.addColorStop(0, '#b08a6e'); g.addColorStop(0.6, '#6b4a3a'); g.addColorStop(1, '#3a2620');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  r.pts.forEach((k, i) => {
+    const a = i / r.pts.length * Math.PI * 2;
+    ctx.lineTo(Math.cos(a) * r.r * k, Math.sin(a) * r.r * k);
+  });
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,.25)';
+  ctx.beginPath(); ctx.arc(r.r * 0.25, r.r * 0.1, r.r * 0.22, 0, 6.28); ctx.fill();
+  ctx.beginPath(); ctx.arc(-r.r * 0.3, r.r * 0.35, r.r * 0.13, 0, 6.28); ctx.fill();
+  ctx.restore();
+}
+
+function drawPlayer() {
+  if (hitTimer > 0 && Math.floor(hitTimer / 100) % 2 === 0) return; // miga
+  const pr = CONFIG.playerSize * S;
+  ctx.save();
+  ctx.shadowColor = '#5ef2ff'; ctx.shadowBlur = 25;
+  const g = ctx.createRadialGradient(player.x - pr * 0.35, player.y - pr * 0.35, pr * 0.1, player.x, player.y, pr);
+  g.addColorStop(0, '#ffffff'); g.addColorStop(0.4, '#7ff6ff'); g.addColorStop(1, '#1b8fd6');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(player.x, player.y, pr, 0, 6.28); ctx.fill();
+  ctx.restore();
+}
+
+function drawSparks() {
+  for (const p of sparks) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 3 * S * p.life + 1, 0, 6.28); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function frame(t) {
+  const dt = Math.min(50, t - (lastT || t));
+  lastT = t;
+  if (state === 'play') update(dt);
+  ctx.save();
+  if (shake > 0) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+  drawBg(dt);
+  if (state !== 'start') {
+    rocks.forEach(drawRock);
+    drawSparks();
+    if (state !== 'over') drawPlayer();
+  }
+  ctx.restore();
+  requestAnimationFrame(frame);
+}
+
+// ---------- ekrany ----------
+function show(id) {
+  ['startScreen', 'pauseScreen', 'overScreen'].forEach(s => $(s).classList.toggle('hidden', s !== id));
+  $('hud').classList.toggle('hidden', id === 'startScreen' || id === 'overScreen');
+}
+
+function startGame() {
+  reset();
+  update.lastSec = 0;
+  state = 'play';
+  show(null);
+  if (!hasTilt && 'ontouchstart' in window) {
+    setTimeout(() => { if (!hasTilt) toast('Przechylanie nie działa. Trzymaj palec tam, dokąd chcesz lecieć'); }, 1500);
+  }
+}
+
+function gameOver() {
+  state = 'over';
+  burst(player.x, player.y, '#5ef2ff', 40);
+  const best = getBest();
+  if (score > best) setBest(score);
+  $('finalScore').textContent = score;
+  $('bestOver').textContent = score > best ? 'Nowy rekord!' : 'Rekord: ' + best;
+  setTimeout(() => show('overScreen'), 600);
+}
+
+function togglePause() {
+  if (state === 'play') { state = 'pause'; show('pauseScreen'); }
+  else if (state === 'pause') { state = 'play'; lastT = 0; show(null); }
+}
+
+$('startBtn').addEventListener('click', async () => { await enableTilt(); startGame(); });
+$('againBtn').addEventListener('click', startGame);
+$('pauseBtn').addEventListener('click', togglePause);
+$('resumeBtn').addEventListener('click', togglePause);
+$('calibBtn').addEventListener('click', () => { needCalib = true; toast('Gotowe: obecna pozycja to teraz „prosto”'); togglePause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') togglePause(); });
+
+requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>
